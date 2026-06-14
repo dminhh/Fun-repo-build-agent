@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import ProgressBar from '@/components/ProgressBar'
@@ -17,12 +17,15 @@ export default function QuizPage() {
   const [basicInfo, setBasicInfo] = useState({ name: '', age: '', job: '', mbti: '' })
   const [answers, setAnswers] = useState<Answer[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(false)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const goNext = () => {
     setDirection(1)
     setStep((s) => s + 1)
   }
   const goBack = () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
     setDirection(-1)
     setStep((s) => s - 1)
     if (step > 1) setAnswers((a) => a.slice(0, -1))
@@ -34,20 +37,30 @@ export default function QuizPage() {
     setAnswers(newAnswers)
 
     if (step < questions.length) {
-      setTimeout(goNext, 350)
+      timeoutRef.current = setTimeout(goNext, 350)
     } else {
       // last question — submit
       setLoading(true)
       const payload: QuizState = { ...basicInfo, answers: newAnswers }
-      const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      const result = await res.json()
-      sessionStorage.setItem('quizState', JSON.stringify(payload))
-      sessionStorage.setItem('analysisResult', JSON.stringify(result))
-      router.push('/result')
+      try {
+        const res = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        if (!res.ok) throw new Error('API error')
+        const result = await res.json()
+        try {
+          sessionStorage.setItem('quizState', JSON.stringify(payload))
+          sessionStorage.setItem('analysisResult', JSON.stringify(result))
+        } catch {
+          // sessionStorage unavailable (e.g. Safari private mode) — proceed anyway
+        }
+        router.push('/result')
+      } catch {
+        setLoading(false)
+        setError(true)
+      }
     }
   }
 
@@ -55,6 +68,26 @@ export default function QuizPage() {
     e.preventDefault()
     if (!basicInfo.name.trim() || !basicInfo.age.trim() || !basicInfo.job.trim()) return
     goNext()
+  }
+
+  if (error) {
+    return (
+      <main className="min-h-screen flex flex-col items-center justify-center"
+        style={{ background: 'linear-gradient(135deg, #FDE8F0 0%, #EDE0F5 100%)' }}>
+        <div className="text-5xl mb-4">😔</div>
+        <p className="text-purple-700 font-bold text-xl mb-2">Có lỗi xảy ra rồi!</p>
+        <p className="text-purple-500 font-semibold mb-6">AI đang bận, thử lại nhé?</p>
+        <motion.button
+          onClick={() => { setError(false); setLoading(false) }}
+          className="px-6 py-3 rounded-full text-white font-bold shadow-md"
+          style={{ background: 'linear-gradient(135deg, #F9A8D4, #C084FC)' }}
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.97 }}
+        >
+          Thử lại →
+        </motion.button>
+      </main>
+    )
   }
 
   if (loading) {
